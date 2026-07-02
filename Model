@@ -1,0 +1,283 @@
+
+install.packages("dplyr")
+install.packages("quantreg")
+install.packages("car")
+install.packages("lmtest")  
+install.packages("sf")
+install.packages("spdep")
+install.packages("ggplot2") 
+install.packages("scales") 
+library(ggplot2)
+library(scales)
+library(spdep)
+library(sf)
+library(lmtest)
+library(car)
+library(dplyr)
+library(quantreg)
+
+
+Accessibility_ <- Accessibility_ %>%
+mutate(across(Municipalities, ~ as.character(gsub(",", ".", .))))
+
+Accessibility_$AREA <- dplyr::case_when(Accessibility_$REG %in% c("Piemonte", "Valle d'Aosta/Vallée d'Aoste",
+"Lombardia", "Liguria") ~ "North West",
+  
+Accessibility_$REG %in% c("Trentino-Alto Adige/Südtirol", "Veneto","Friuli-Venezia Giulia", "Emilia-Romagna") ~ "North East",
+  
+Accessibility_$REG %in% c("Toscana", "Umbria", "Marche", "Lazio") ~ "Centre",
+  
+Accessibility_$REG %in% c("Abruzzo", "Molise", "Campania","Puglia", "Basilicata", "Calabria") ~ "South",
+  
+Accessibility_$REG %in% c("Sicilia", "Sardegna") ~ "Islands",
+  
+TRUE ~ NA_character_)
+
+summary(Accessibility_)
+
+
+
+vari <- c("INC","EDU","SUS","LAN","RAI","HIG","AIR","POR","POP")
+
+datatable <- Accessibility_[, vari]
+
+cor_matrix <- cor(datatable, use = "complete.obs")
+round(cor_matrix, 3)
+
+
+vari2 <- c("INC","EDU","SUS","LAN","TEC","RAI","HIG","AIR","POR","POP")
+
+datatable <- Accessibility_[, vari2]
+
+cor_matrix <- cor(datatable, use = "complete.obs")
+round(cor_matrix, 3)
+
+quartz(width=10, height=6)  
+
+ggplot(Accessibility_, aes(x = INC)) +
+geom_histogram(aes(y = ..density..), fill = "blue", color = "black", bins = 30) +
+geom_density(color = "red", size = 1.2, adjust = 2) +  
+scale_x_continuous(breaks = pretty_breaks(n = 10),labels = label_number(accuracy = 1, big.mark = ",") ) +
+scale_y_continuous(labels = label_scientific(accuracy = 0.01)  ) + labs(title = "", x = "INC", y = "Density") + theme_minimal()
+
+
+norm_minmax <- function(x) {
+  (x - min(x, na.rm = TRUE)) / (max(x, na.rm = TRUE) - min(x, na.rm = TRUE))}
+
+norm_minmax_inv <- function(x) {
+  1 - norm_minmax(x)}
+
+var_Positive <- c("EDU", "SUS", "LAN", "TEC")
+var_negative <- c("RAI", "HIG", "AIR", "POR")
+
+
+Accessibility_ <- Accessibility_ %>%
+mutate(across(all_of(var_Positive), ~ . / 100),                
+across(all_of(var_negative), norm_minmax_inv),          
+INC = norm_minmax(INC), POP = norm_minmax(POP))                           
+  
+
+OLS1 <- lm(INC ~ EDU + SUS + LAN + RAI + HIG + AIR + POR + POP + factor(REG),
+data = Accessibility_)
+
+summary(OLS1)
+
+
+OLS2 <- lm(INC ~ EDU + SUS + LAN + RAI + HIG + AIR + POR + POP + factor(AREA),
+data = Accessibility_)
+
+summary(OLS2)
+
+OLS3 <- lm(INC ~ EDU + SUS + LAN + TEC + RAI + HIG + AIR + POR + POP + factor(REG), 
+data = Accessibility_)
+
+summary(OLS3)
+
+OLS4 <- lm(INC ~ EDU + SUS + LAN + TEC + RAI + HIG + AIR + POR + POP + factor(AREA),
+data = Accessibility_)
+
+summary(OLS4)
+
+
+# VIF 
+vif(OLS1)
+vif(OLS2)
+vif(OLS3)
+vif(OLS4)
+
+#  Breusch-Pagan
+
+bptest(OLS1)
+bptest(OLS2)
+bptest(OLS3)
+bptest(OLS4)
+
+
+#Moran's I 
+Municipality <- st_read("~/Library/Mobile Documents/com~apple~CloudDocs/Com01012022/Comuni.shp")
+
+
+
+Municipality <- Municipality %>% mutate(
+REG = case_when(
+COD_REG == 1  ~ "Piemonte",
+COD_REG == 2  ~ "Valle d'Aosta/Vallée d'Aoste",
+COD_REG == 3  ~ "Lombardia",
+COD_REG == 4  ~ "Trentino-Alto Adige/Südtirol",
+COD_REG == 5  ~ "Veneto",
+COD_REG == 6  ~ "Friuli-Venezia Giulia",
+COD_REG == 7  ~ "Liguria",
+COD_REG == 8  ~ "Emilia-Romagna",
+COD_REG == 9  ~ "Toscana",
+COD_REG == 10 ~ "Umbria",
+COD_REG == 11 ~ "Marche",
+COD_REG == 12 ~ "Lazio",
+COD_REG == 13 ~ "Abruzzo",
+COD_REG == 14 ~ "Molise",
+COD_REG == 15 ~ "Campania",
+COD_REG == 16 ~ "Puglia",
+COD_REG == 17 ~ "Basilicata",
+COD_REG == 18 ~ "Calabria",
+COD_REG == 19 ~ "Sicilia",
+COD_REG == 20 ~ "Sardegna"))
+
+
+Municipality_data <- dplyr::left_join(
+Municipality, Accessibility_, by = c("COMUNE" = "Municipalities", "REG" = "REG"))
+
+
+
+nb <- poly2nb(Municipality_data, queen = TRUE)
+lw <- nb2listw(nb, style = "W", zero.policy = TRUE)
+
+lm.morantest(OLS1, lw, zero.policy = TRUE)
+lm.morantest(OLS2, lw, zero.policy = TRUE)
+lm.morantest(OLS3, lw, zero.policy = TRUE)
+lm.morantest(OLS4, lw, zero.policy = TRUE)
+
+
+
+#Model with Regions
+
+#(Abdullah, 2016)
+taus <- c(0.50, 0.75, 0.90)
+
+QR1 <- rq(INC ~ EDU + SUS + LAN + POP + RAI + HIG + AIR + POR + factor(REG),
+tau = taus, data = Accessibility_)
+summary(QR1)
+summary(QR1, se = "boot", R = 1000) 
+
+
+# (n.d. ,2023)
+
+pseudo_R2 <- sapply(taus, function(tau) {
+  
+fit0 <- rq(INC ~ 1, tau = tau, data = Accessibility_)
+  
+  
+fit1 <- rq(INC ~ EDU + SUS + LAN + RAI + HIG + AIR + POR + POP + factor(REG),
+tau = tau, data = Accessibility_)
+  
+1 - fit1$rho / fit0$rho})
+
+names(pseudo_R2) <- paste0("tau_", taus)
+
+pseudo_R2     
+
+
+
+
+#Model with Macro-Area
+#(Abdullah, 2016)
+taus <- c(0.25, 0.50, 0.75, 0.90)
+
+
+QR2 <- rq(INC ~ EDU + SUS + LAN + POP + RAI + HIG + AIR + POR + factor(AREA),
+tau = taus,data = Accessibility_)
+summary(QR2)
+summary(QR2, se = "boot", R = 1000) 
+
+# (n.d. ,2023)
+
+pseudo_R2 <- sapply(taus, function(tau) {
+  
+fit0 <- rq(INC ~ 1, tau = tau, data = Accessibility_)
+  
+  
+fit1 <- rq(INC ~ EDU + SUS + LAN + RAI + HIG + AIR + POR + POP + factor(AREA),
+tau = tau, data = Accessibility_)
+  
+  
+1 - fit1$rho / fit0$rho})
+
+names(pseudo_R2) <- paste0("tau_", taus)
+
+pseudo_R2     
+
+
+
+#Alternative model with TEC and Regions 
+
+#(Abdullah, 2016)
+taus <- c(0.50, 0.75, 0.90 )
+
+
+QR3 <- rq(
+INC ~ EDU + SUS + LAN + POP + TEC + RAI + HIG + AIR + POR + factor(REG),
+tau = taus, data = Accessibility_)
+summary(QR3)
+summary(QR3, se = "boot", R = 1000) 
+
+
+# (n.d. ,2023)
+
+pseudo_R2 <- sapply(taus, function(tau) {
+  
+fit0 <- rq(INC ~ 1, tau = tau, data = Accessibility_)
+  
+  
+fit1 <- rq(INC ~ EDU + SUS + LAN + TEC + RAI + HIG + AIR + POR + POP + factor(REG),
+tau = tau, data = Accessibility_)
+  
+  
+1 - fit1$rho / fit0$rho})
+
+names(pseudo_R2) <- paste0("tau_", taus)
+
+pseudo_R2     
+
+
+
+#Alternative model with TEC and Macro-area 
+
+#(Abdullah, 2016)
+taus <- c(0.25, 0.50, 0.75, 0.90)
+
+
+QR4 <- rq(INC ~ EDU + SUS + LAN + POP + TEC + RAI + HIG + AIR + POR + factor(AREA),
+tau = taus, data = Accessibility_)
+summary(QR4)
+summary(QR4, se = "boot", R = 1000) 
+
+# (n.d. ,2023)
+
+pseudo_R2 <- sapply(taus, function(tau) {
+  
+fit0 <- rq(INC ~ 1, tau = tau, data = Accessibility_)
+  
+  
+fit1 <- rq(INC ~ EDU + SUS + LAN + TEC + RAI + HIG + AIR + POR + POP + factor(AREA),
+tau = tau, data = Accessibility_)
+  
+  
+1 - fit1$rho / fit0$rho})
+
+names(pseudo_R2) <- paste0("tau_", taus)
+
+pseudo_R2     
+
+
+#List of reference
+#Abdullah, i. 2016. Tutorial: Quantile Regression using R. Rpubs. https://rpubs.com/ibn_abdullah/rquantile
+# n.d. 2023.find pseudo R-squared for quantile regression models. https://stackoverflow.com/questions/76428807/find-pseudo-r-squared-for-quantile-regression-models
+
